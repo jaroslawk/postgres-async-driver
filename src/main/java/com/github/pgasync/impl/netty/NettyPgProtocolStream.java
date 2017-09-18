@@ -26,6 +26,7 @@ import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandshakeCompletionEvent;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
+import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
 import rx.Observable;
@@ -34,9 +35,7 @@ import rx.Subscriber;
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.*;
 
 /**
  * Netty connection to PostgreSQL backend.
@@ -50,6 +49,7 @@ public class NettyPgProtocolStream implements PgProtocolStream {
     final SocketAddress address;
     final boolean useSsl;
     final boolean pipeline;
+    int readTimeout;
 
     final GenericFutureListener<Future<? super Object>> onError;
     final Queue<Subscriber<? super Message>> subscribers;
@@ -57,12 +57,13 @@ public class NettyPgProtocolStream implements PgProtocolStream {
 
     ChannelHandlerContext ctx;
 
-    public NettyPgProtocolStream(EventLoopGroup group, SocketAddress address, boolean useSsl, boolean pipeline) {
+    public NettyPgProtocolStream(EventLoopGroup group, SocketAddress address, boolean useSsl, boolean pipeline, int readTimeout) {
         this.group = group;
         this.eventLoop = group.next();
         this.address = address;
         this.useSsl = useSsl; // TODO: refactor into SSLConfig with trust parameters
         this.pipeline = pipeline;
+        this.readTimeout = readTimeout;
         this.subscribers = new LinkedBlockingDeque<>(); // TODO: limit pipeline queue depth
         this.onError = future -> {
             if(!future.isSuccess()) {
@@ -250,6 +251,9 @@ public class NettyPgProtocolStream implements PgProtocolStream {
         return new ChannelInitializer<Channel>() {
             @Override
             protected void initChannel(Channel channel) throws Exception {
+                if(readTimeout!=0) {
+                    channel.pipeline().addLast(new ReadTimeoutHandler(readTimeout, TimeUnit.MILLISECONDS));
+                }
                 if(useSsl) {
                     channel.pipeline().addLast(newSslInitiator());
                 }
